@@ -371,10 +371,41 @@ var ACTIONS = {
         envoyer: function (v) { return API.mfa('confirmer', v.code).then(function () { toast('Double authentification activée'); SONS.jouer('finalisation'); return App.recharger(); }); } });
     }, function (e) { attente(false); toast(e.message, true); });
   },
+  faceId: function () {
+    var cle = FaceID.cle(), ici = cle && (S.moi.faceId || []).some(function (f) { return f.id === cle; });
+    if (!ici) return proposerFaceID(false);
+    confirmer({ titre: 'Retirer ' + FaceID.libelle, texte: 'Sur cet appareil, l’application demandera de nouveau votre code.', bouton: 'Retirer', action: function () {
+      return API.faceIdRetirer(cle).then(function (r) { FaceID.oublier(); S.moi = r.moi || S.moi; toast(FaceID.libelle.charAt(0).toUpperCase() + FaceID.libelle.slice(1) + ' retiré de cet appareil'); App.rendre(true); });
+    } });
+  },
   deconnexion: function () { SONS.ambiance(false); API.deconnexion().then(function () { Local.effacer('le.etat'); App.porte(); }); },
   profilDemo: function (el, d) { API.profil(d.v); S.filtre = { societeId: '', branchId: '', bienId: '', periode: S.filtre.periode, debut: S.filtre.debut, fin: S.filtre.fin }; sauverFiltre(); App.recharger().then(function () { toast('Vous voyez maintenant l’application comme : ' + S.moi.nom); location.hash = '#/accueil'; }); },
   reinitDemo: function () { confirmer({ titre: 'Réinitialiser la démonstration', texte: 'Les données fictives sont recréées ; vos essais sont effacés de ce navigateur.', bouton: 'Réinitialiser', action: function () { API.reinitialiser(); return App.recharger().then(function () { toast('Démonstration réinitialisée'); }); } }); }
 };
+
+/* Activer Face ID sur cet appareil : proposé après une connexion par code (auto), ou depuis Réglages.
+   Le défi est demandé avant d'afficher la fenêtre : la création de la clé se fait dans le toucher du bouton (exigence de Safari). */
+function proposerFaceID(auto) {
+  if (API.demo || !S.moi || !S.moi.faceIdPossible) { if (!auto) toast('Face ID n’est pas encore configuré pour cette application.', true); return; }
+  FaceID.disponible().then(function (ok) {
+    if (!ok) { if (!auto) toast('Cet appareil ne propose pas ' + FaceID.libelle + ' pour les sites web.', true); return; }
+    if (auto && (FaceID.cle() || Local.lire('le.faceid.plustard', false))) return;
+    return API.faceIdDefi('creation').then(function (d) {
+      var L = FaceID.libelle;
+      var f = Feuille.ouvrir({ titre: 'Se connecter avec ' + L, sous: 'Sur cet appareil, la prochaine fois',
+        corps: '<p class="texte-2" style="font-size:14px;margin:0 0 10px">Loft Eleven s’ouvrira avec ' + esc(L) + ', sans code. Votre visage ou votre empreinte ne quittent jamais l’appareil ; votre code personnel reste valable.</p><div class="form-msg" data-msg role="alert"></div>',
+        pied: '<button class="bt discret" data-plus-tard>' + (auto ? 'Plus tard' : 'Annuler') + '</button><button class="bt principal-bt" data-activer-fid>Activer</button>' });
+      f.querySelector('[data-plus-tard]').addEventListener('click', function () { if (auto) Local.ecrire('le.faceid.plustard', true); Feuille.fermer(); });
+      f.querySelector('[data-activer-fid]').addEventListener('click', function () {
+        var bt = this; bt.disabled = true;
+        FaceID.creer(d, S.moi).then(API.faceIdEnregistrer).then(function (r) {
+          Feuille.fermer(); S.moi = r.moi || S.moi; Local.effacer('le.faceid.plustard');
+          toast(L.charAt(0).toUpperCase() + L.slice(1) + ' activé sur cet appareil'); SONS.jouer('finalisation'); App.rendre(true);
+        }, function (e) { bt.disabled = false; f.querySelector('[data-msg]').textContent = e.message; });
+      });
+    });
+  }).catch(function (e) { if (!auto) toast(e.message, true); });
+}
 
 /* ================================================================== FORMULAIRES MÉTIER */
 function formBien(b) {
@@ -595,10 +626,10 @@ function formContact(t) {
 
 function formUtilisateur(u) {
   var socs = [['*', 'Tout le groupe']].concat(V(S.db.societes).map(function (s) { return [s.id, s.nom]; })), M = { tableau: 'Tableau de bord', finance: 'Finances', reservations: 'Réservations', biens: 'Biens', conciergerie: 'Conciergerie', projets: 'Projets', tiers: 'Contacts', journal: 'Journal', rapports: 'Rapports' };
-  var val = u ? { nom: u.nom, email: u.email, role: u.role, fonction: u.fonction, expire: u.expire, societes: (u.perimetre || {}).societes || ['*'], branches: (u.perimetre || {}).branches || [], retires: Object.keys(u.modules || {}).filter(function (k) { return u.modules[k] === 0; }), tiersId: u.tiersId } : { role: 'collaborateur', societes: S.filtre.societeId ? [S.filtre.societeId] : [] };
+  var val = u ? { nom: u.nom, prenom: u.prenom, email: u.email, role: u.role, fonction: u.fonction, expire: u.expire, societes: (u.perimetre || {}).societes || ['*'], branches: (u.perimetre || {}).branches || [], retires: Object.keys(u.modules || {}).filter(function (k) { return u.modules[k] === 0; }), tiersId: u.tiersId } : { role: 'collaborateur', societes: S.filtre.societeId ? [S.filtre.societeId] : [] };
   var f = formulaire({ titre: u ? u.nom : 'Nouvel accès', surtitre: u ? LE.ROLES[u.role].nom : 'Accès', valeurs: val,
     champs: [
-      { k: 'nom', l: 'Nom', t: 'texte', req: true }, u ? null : { k: 'email', l: 'E-mail de connexion', t: 'email', req: true },
+      { k: 'nom', l: 'Nom', t: 'texte', req: true }, { k: 'prenom', l: 'Prénom d’usage (accueil)', t: 'texte', aide: 'Celui de « Bonjour, … ». Par défaut, le premier mot du nom.' }, u ? null : { k: 'email', l: 'E-mail de connexion', t: 'email', req: true },
       { k: 'role', l: 'Rôle', t: 'select', opts: Object.keys(LE.ROLES).map(function (r) { return [r, LE.ROLES[r].nom]; }), req: true }, { k: 'fonction', l: 'Fonction', t: 'texte' },
       { k: 'societes', l: 'Sociétés autorisées', t: 'multi', opts: socs },
       { k: 'branches', l: 'Limiter à certaines branches (sinon toutes)', t: 'multi', opts: V(S.db.branches).map(function (b) { return [b.id, b.nom]; }), si: function (v) { return v.role === 'resp_metier' || v.role === 'comptable' || v.role === 'collaborateur'; } },
@@ -611,7 +642,7 @@ function formUtilisateur(u) {
     bouton: u ? 'Enregistrer' : 'Créer l’accès',
     envoyer: function (v) {
       var modules = {}; (v.retires || []).forEach(function (m) { modules[m] = 0; });
-      var d = { nom: v.nom, role: v.role, fonction: v.fonction || null, expire: v.expire || '', perimetre: { societes: v.societes && v.societes.length ? v.societes : ['*'], branches: v.branches || [] }, modules: modules, tiersId: v.tiersId || null };
+      var d = { nom: v.nom, prenom: v.prenom || null, role: v.role, fonction: v.fonction || null, expire: v.expire || '', perimetre: { societes: v.societes && v.societes.length ? v.societes : ['*'], branches: v.branches || [] }, modules: modules, tiersId: v.tiersId || null };
       if (u) { d.id = u.id; return ecrire('utilisateur.modifier', d, 'Accès modifié'); }
       d.email = v.email; if (!d.expire) delete d.expire;
       return ecrire('utilisateur.creer', d, 'Accès créé', 'finalisation').then(function (r) { if (!API.demo) return API.codeAcces(r.id).then(montrerCode); });

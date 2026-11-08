@@ -101,6 +101,10 @@ var API = (function () {
     },
     mfa: function (etape, code) { return appel('mfa', { etape: etape, code: code || '' }, { essais: 1 }); },
     changerCode: function (ancien, nouveau) { return appel('changerCode', { ancien: ancien, nouveau: nouveau }, { essais: 1 }); },
+    faceIdDefi: function (but) { return appel('faceIdDefi', { but: but }, { essais: 1 }); },
+    faceIdEnregistrer: function (d) { return appel('faceIdEnregistrer', d, { essais: 0 }).then(function (r) { if (r.moi) moi = r.moi; return r; }); },
+    faceIdConnexion: function (d) { return appel('faceIdConnexion', d, { essais: 0 }).then(function (r) { if (r.jeton) { jeton = r.jeton; Local.ecrire(CLE_JETON, jeton); } return r; }); },
+    faceIdRetirer: function (id) { return appel('faceIdRetirer', { id: id || '' }, { essais: 1 }).then(function (r) { if (r.moi) moi = r.moi; return r; }); },
     codeAcces: function (id) { return demo ? Promise.resolve({ code: null, demo: true }) : appel('codeAcces', { id: id }, { essais: 0 }); },
     /* Photos : en démonstration, gardées dans ce navigateur (IndexedDB) ; en production, dans le Drive privé du client. */
     envoyerPhoto: function (dataUrl) {
@@ -116,6 +120,74 @@ var API = (function () {
     profilCourant: function () { return Local.lire(CLE_PROFIL, 'direction@demo.loft-eleven.ci'); },
     reinitialiser: function () { base = DEMO.creerBase(LE.jour()); Local.ecrire(CLE_DB, base); Photos.vider(); rafraichirVue(); },
     jetonPresent: function () { return !!jeton; }
+  };
+})();
+
+/* Face ID / empreinte (passkeys WebAuthn) : la clé reste dans le téléphone, le serveur vérifie la signature.
+   Les appels au téléphone se font dans le geste de l'utilisateur (exigence de Safari) : le défi est donc demandé avant. */
+var FaceID = (function () {
+  var ua = navigator.userAgent, ios = /iPhone|iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+  var LIB = ios ? 'Face ID' : /Macintosh/.test(ua) ? 'Touch ID' : /Android/i.test(ua) ? 'l’empreinte' : 'la reconnaissance de l’appareil';
+  var CLE = 'le.faceid', dispo = null;
+  function b64u(buf) { var s = '', b = new Uint8Array(buf); for (var i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
+  function deB64u(t) { t = String(t).replace(/-/g, '+').replace(/_/g, '/'); while (t.length % 4) t += '='; var s = atob(t), b = new Uint8Array(s.length); for (var i = 0; i < s.length; i++) b[i] = s.charCodeAt(i); return b; }
+  function hex(b) { return Array.prototype.map.call(b, function (x) { return ('0' + x.toString(16)).slice(-2); }).join(''); }
+  function cbor(b) {
+    var i = 0;
+    function lire() {
+      var t = b[i++], maj = t >> 5, inf = t & 31, n = inf;
+      if (inf === 24) n = b[i++]; else if (inf === 25) { n = (b[i] << 8) | b[i + 1]; i += 2; } else if (inf === 26) { n = ((b[i] << 24) | (b[i + 1] << 16) | (b[i + 2] << 8) | b[i + 3]) >>> 0; i += 4; }
+      if (maj === 0) return n; if (maj === 1) return -1 - n;
+      if (maj === 2) { var v = b.slice(i, i + n); i += n; return v; }
+      if (maj === 3) { var s = new TextDecoder().decode(b.slice(i, i + n)); i += n; return s; }
+      if (maj === 4) { var a = []; for (var k = 0; k < n; k++) a.push(lire()); return a; }
+      if (maj === 5) { var m = {}; for (var q = 0; q < n; q++) { var c = lire(); m[c] = lire(); } return m; }
+      return null;
+    }
+    return lire();
+  }
+  function clePublique(rep) {   // directement si le navigateur la fournit, sinon lue dans la réponse CBOR
+    if (rep.getPublicKey) { var spki = new Uint8Array(rep.getPublicKey()); if (spki.length >= 65) return { x: hex(spki.slice(-64, -32)), y: hex(spki.slice(-32)) }; }
+    var o = cbor(new Uint8Array(rep.attestationObject)), ad = o.authData, l = (ad[53] << 8) | ad[54], k = cbor(ad.slice(55 + l));
+    return { x: hex(k[-2]), y: hex(k[-3]) };
+  }
+  function erreur(e) {
+    var n = e && e.name;
+    if (n === 'NotAllowedError' || n === 'AbortError') return LIB.charAt(0).toUpperCase() + LIB.slice(1) + ' annulé. Vous pouvez aussi utiliser votre code.';
+    if (n === 'InvalidStateError') return LIB.charAt(0).toUpperCase() + LIB.slice(1) + ' est déjà activé sur cet appareil.';
+    if (n === 'SecurityError') return LIB.charAt(0).toUpperCase() + LIB.slice(1) + ' n’est possible que depuis l’adresse officielle de l’application.';
+    return (e && e.message) || 'Échec de ' + LIB + '.';
+  }
+  return {
+    libelle: LIB,
+    disponible: function () {
+      if (!dispo) dispo = window.PublicKeyCredential && PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable && window.isSecureContext
+        ? PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable().catch(function () { return false; }) : Promise.resolve(false);
+      return dispo;
+    },
+    cle: function () { return Local.lire(CLE, null); },
+    oublier: function () { Local.effacer(CLE); },
+    /* À appeler dans le geste (toucher) : renvoie ce que le serveur doit enregistrer. */
+    creer: function (d, moi) {
+      return navigator.credentials.create({ publicKey: {
+        challenge: deB64u(d.defi), rp: { id: d.rpId, name: 'Loft Eleven · Private Office' },
+        user: { id: new TextEncoder().encode('loft-eleven:' + moi.id), name: moi.email || moi.nom, displayName: moi.nom },
+        pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+        authenticatorSelection: { authenticatorAttachment: 'platform', residentKey: 'preferred', userVerification: 'required' },
+        attestation: 'none', timeout: 60000 } }).then(function (c) {
+          var k = clePublique(c.response), alg = c.response.getPublicKeyAlgorithm ? c.response.getPublicKeyAlgorithm() : -7;
+          var appareil = ios ? (/iPad/.test(ua) ? 'iPad' : 'iPhone') : /Android/i.test(ua) ? 'Android' : /Macintosh/.test(ua) ? 'Mac' : /Windows/i.test(ua) ? 'PC Windows' : 'Appareil';
+          Local.ecrire(CLE, b64u(c.rawId));
+          return { id: b64u(c.rawId), x: k.x, y: k.y, alg: alg, clientDataJSON: b64u(c.response.clientDataJSON), appareil: appareil };
+        }, function (e) { throw new Error(erreur(e)); });
+    },
+    obtenir: function (d) {
+      var cle = Local.lire(CLE, null), o = { challenge: deB64u(d.defi), rpId: d.rpId, userVerification: 'required', timeout: 60000 };
+      if (cle) o.allowCredentials = [{ type: 'public-key', id: deB64u(cle) }];
+      return navigator.credentials.get({ publicKey: o }).then(function (c) {
+        return { id: b64u(c.rawId), clientDataJSON: b64u(c.response.clientDataJSON), authenticatorData: b64u(c.response.authenticatorData), signature: b64u(c.response.signature) };
+      }, function (e) { var x = new Error(erreur(e)); x.annule = e && (e.name === 'NotAllowedError' || e.name === 'AbortError'); throw x; });
+    }
   };
 })();
 
@@ -197,7 +269,8 @@ function nomDe(col, id, champ) { var r = id && S.db[col] && S.db[col][id]; retur
 function peut(module, n) { return LE.niveau(S.moi, module) >= (n || 1); }
 function propre() { return !!(S.moi && LE.ROLES[S.moi.role].propre); }
 function bonjour() { var h = new Date().getHours(); return h < 5 ? 'Bonne nuit' : h < 18 ? 'Bonjour' : 'Bonsoir'; }
-function prenom(n) { var p = String(n || '').replace(/^(M\.|Mme|Mlle)\s+/, '').split(' '); return p[0]; }
+/* Prénom pour l'accueil : le prénom d'usage s'il est renseigné (« Yapi Aurélie » → « Aurélie »), sinon le premier mot du nom. */
+function prenom(u) { if (u && typeof u === 'object') { if (u.prenom) return u.prenom; u = u.nom; } var p = String(u || '').replace(/^(M\.|Mme|Mlle)\s+/, '').split(' '); return p[0]; }
 function uid() { return Math.random().toString(36).slice(2, 9); }
 function trierPar(l, f, inverse) { return l.slice().sort(function (a, b) { var x = f(a), y = f(b); return (x < y ? -1 : x > y ? 1 : 0) * (inverse ? -1 : 1); }); }
 

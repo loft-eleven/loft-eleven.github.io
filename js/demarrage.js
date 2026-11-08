@@ -46,6 +46,7 @@ var App = {
       h += '<p class="phrase">Bienvenue.</p><div class="porte-actions"><button class="bt grand principal-bt bt-entrer" data-entrer="son">Entrer avec la signature sonore</button><button class="lien" data-entrer="silence">Entrer en silence</button><button class="lien" data-autre-compte>Changer de compte</button></div><div class="erreur" data-erreur role="alert"></div>';
     } else {
       h += '<p class="phrase">Espace privé de direction. Connectez-vous avec l’adresse et le code qui vous ont été remis.</p>'
+        + '<div class="porte-actions cache" data-fid-zone><button class="bt grand principal-bt bt-entrer" type="button" data-fid-go>' + ic('acces') + 'Se connecter avec ' + esc(FaceID.libelle) + '</button><div class="mention" style="margin:6px 0 14px">ou avec votre code</div></div>'
         + '<form class="connexion" data-connexion novalidate><label class="champ"><span>Adresse e-mail</span><input name="email" type="email" autocomplete="username" autocapitalize="off" required></label>'
         + '<label class="champ"><span>Code personnel</span><input name="code" type="password" autocomplete="current-password" required></label>'
         + '<label class="champ cache" data-etape="nouveau"><span>Choisissez votre code (8 caractères au moins)</span><input name="nouveau" type="password" autocomplete="new-password"></label>'
@@ -63,6 +64,24 @@ var App = {
       if (e.target.closest('[data-autre-compte]')) API.deconnexion().then(function () { p.remove(); App.porte(); });
     });
     var form = p.querySelector('[data-connexion]');
+    /* Face ID : le défi est demandé d'avance, pour que l'appel au téléphone se fasse dans le toucher (exigence de Safari). */
+    var zone = p.querySelector('[data-fid-zone]'), defiFid = null;
+    function fidConnexion(auto) {
+      var d = defiFid, err = p.querySelector('[data-erreur]'); defiFid = null; if (!d) return;
+      FaceID.obtenir(d).then(API.faceIdConnexion).then(function () { App.entrer(true, p); }, function (e2) {
+        if (!(auto && e2.annule)) { err.textContent = e2.message; SONS.jouer('erreur'); }
+        if (/plus activé/.test(e2.message)) { FaceID.oublier(); zone.classList.add('cache'); return; }
+        API.faceIdDefi('connexion').then(function (r) { defiFid = r; }, function () { });
+      });
+    }
+    if (zone && FaceID.cle()) FaceID.disponible().then(function (ok) {
+      if (!ok) return;
+      API.faceIdDefi('connexion').then(function (r) { defiFid = r; zone.classList.remove('cache'); fidConnexion(true); }, function () { });
+    });
+    if (zone) zone.querySelector('[data-fid-go]').addEventListener('click', function () {
+      if (defiFid) return fidConnexion(false);
+      API.faceIdDefi('connexion').then(function (r) { defiFid = r; fidConnexion(false); }, function (e2) { p.querySelector('[data-erreur]').textContent = e2.message; });
+    });
     if (form) form.addEventListener('submit', function (e) {
       e.preventDefault();
       var v = { email: form.email.value.trim(), code: form.code.value, nouveau: form.nouveau.value, confirmation: form.confirmation.value, totp: form.totp.value.trim() }, err = form.querySelector('[data-erreur]');
@@ -74,6 +93,7 @@ var App = {
         bt.disabled = false; bt.textContent = 'Entrer';
         if (r.etape) { form.querySelectorAll('[data-etape="' + r.etape + '"]').forEach(function (x) { x.classList.remove('cache'); }); err.textContent = r.etape === 'nouveau' ? 'Première connexion : choisissez votre code personnel.' : 'Saisissez le code à 6 chiffres de votre application d’authentification.'; return; }
         App.entrer(true, p);
+        setTimeout(function () { proposerFaceID(true); }, 2200);   // propose Face ID pour la prochaine fois
       }, function (e2) { bt.disabled = false; bt.textContent = 'Entrer'; err.textContent = e2.message; SONS.jouer('erreur'); });
     });
   },

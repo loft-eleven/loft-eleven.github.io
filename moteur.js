@@ -188,7 +188,7 @@ var LE = (function () {
       libelle: '!texte', date: '!date', heure: 'heure', priorite: 'enum:priorite', assigneId: 'ref:utilisateurs', prix: 'montant', cout: 'montant', notes: 'long' },
     projets: { societeId: 'ref:societes', branchId: 'ref:branches', bienId: 'ref:biens', clientId: 'ref:tiers', nom: '!texte', type: '!enum:typeProjet',
       budget: 'montant', debut: 'date', finPrevue: 'date', description: 'long' },
-    utilisateurs: { nom: '!texte', email: '!texte', role: '!enum:roles', fonction: 'texte', expire: 'date', tiersId: 'ref:tiers' }
+    utilisateurs: { nom: '!texte', prenom: 'texte', email: '!texte', role: '!enum:roles', fonction: 'texte', expire: 'date', tiersId: 'ref:tiers' }
   };
   function nettoyer(db, col, d, partiel) {
     var sch = SCHEMA[col], out = {};

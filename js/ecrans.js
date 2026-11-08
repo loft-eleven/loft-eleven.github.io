@@ -24,7 +24,7 @@ function ecranAccueil() {
   if (!peut('tableau')) return ecranAgenda();
   var k = kpis(), p = periodeCourante(), serie = LE.serieMensuelle(S.db, { societeId: S.filtre.societeId, branchId: S.filtre.branchId, bienId: S.filtre.bienId, fin: S.auj, aujourdhui: S.auj }, 12);
   var fin = peut('finance'), al = alertesCourantes();
-  var h = '<div class="bienvenue"><div><div class="surtitre">Executive Office · ' + esc(nomPerimetre()) + '</div><h1>' + bonjour() + ', ' + esc(prenom(S.moi.nom)) + '</h1><div class="date">' + esc(dateLongue(S.auj).replace(/^./, function (c) { return c.toUpperCase(); })) + ' · ' + esc(p.nom) + '</div></div>' + ongletsPeriode() + '</div>';
+  var h = '<div class="bienvenue"><div><div class="surtitre">Executive Office · ' + esc(nomPerimetre()) + '</div><h1>' + bonjour() + ', ' + esc(prenom(S.moi)) + '</h1><div class="date">' + esc(dateLongue(S.auj).replace(/^./, function (c) { return c.toUpperCase(); })) + ' · ' + esc(p.nom) + '</div></div>' + ongletsPeriode() + '</div>';
 
   var cartes = [];
   if (fin) {
@@ -390,7 +390,7 @@ function ligneTache(t) {
 function ecranMissions() {
   var taches = V(S.db.taches).filter(function (t) { return t.assigneId === S.moi.id && (t.statut === 'a_faire' || t.statut === 'en_cours' || t.statut === 'faite'); });
   var prest = V(S.db.prestations).filter(function (p) { return p.assigneId === S.moi.id && p.statut !== 'realisee' && p.statut !== 'annulee'; });
-  var h = '<div class="bienvenue"><div><div class="surtitre">Mes missions</div><h1>' + bonjour() + ', ' + esc(prenom(S.moi.nom)) + '</h1><div class="date">' + esc(dateLongue(S.auj).replace(/^./, function (c) { return c.toUpperCase(); })) + (S.moi.expire ? ' · accès valable jusqu’au ' + dateCourte(S.moi.expire, true) : '') + '</div></div></div>';
+  var h = '<div class="bienvenue"><div><div class="surtitre">Mes missions</div><h1>' + bonjour() + ', ' + esc(prenom(S.moi)) + '</h1><div class="date">' + esc(dateLongue(S.auj).replace(/^./, function (c) { return c.toUpperCase(); })) + (S.moi.expire ? ' · accès valable jusqu’au ' + dateCourte(S.moi.expire, true) : '') + '</div></div></div>';
   var auj = taches.filter(function (t) { return t.date <= S.auj; }), apres = taches.filter(function (t) { return t.date > S.auj; });
   h += '<div class="grille g-12"><div class="carte s7"><div class="carte-titre"><h2>Aujourd’hui</h2><span class="texte-3" style="font-size:13px">' + auj.length + ' tâche(s)</span></div>' + (auj.length ? '<div class="liste">' + trierPar(auj, function (t) { return t.heure || '99'; }).map(ligneTache).join('') + '</div>' : vide('ok', 'Tout est fait', 'Aucune tâche en attente pour aujourd’hui.')) + '</div>';
   h += '<div class="s5" style="display:flex;flex-direction:column;gap:16px">' + (prest.length ? '<div class="carte"><div class="carte-titre"><h2>Missions de conciergerie</h2></div>' + listePrestations(trierPar(prest, function (p) { return p.date + (p.heure || ''); })) + '</div>' : '')
@@ -604,6 +604,12 @@ function ecranJournal() {
 
 /* ================================================================== RÉGLAGES, PLUS, À PROPOS */
 function interrupteur(act, on, lib) { return '<button class="interrupteur' + (on ? ' on' : '') + '" role="switch" aria-checked="' + !!on + '" aria-label="' + esc(lib) + '" data-act="' + act + '"></button>'; }
+function ligneFaceID() {
+  if (!S.moi.faceIdPossible) return '';
+  var l = S.moi.faceId || [], cle = FaceID.cle(), ici = cle && l.some(function (f) { return f.id === cle; });
+  var t = ici ? 'Activée sur cet appareil' + (l.length > 1 ? ' · ' + l.length + ' appareils' : '') : l.length ? l.length + ' appareil' + (l.length > 1 ? 's' : '') + ' enregistré' + (l.length > 1 ? 's' : '') + ', pas celui-ci' : 'Ouvrir Loft Eleven sans code, avec votre visage ou votre empreinte';
+  return '<div class="reglage"><span class="pastille-ic">' + ic('acces') + '</span><div class="corps"><div>Connexion avec ' + esc(FaceID.libelle) + '</div><div class="t2">' + esc(t) + '</div></div><button class="bt petit" data-act="faceId">' + (ici ? 'Retirer' : 'Activer') + '</button></div>';
+}
 function ecranReglages() {
   var h = entete('Préférences de cet appareil', 'Réglages', '');
   h += '<div class="grille g2"><div class="carte"><div class="carte-titre"><h2>Identité sonore</h2></div>'
@@ -617,7 +623,7 @@ function ecranReglages() {
     + (!API.demo ? '<div class="reglage"><span class="pastille-ic">' + ic('horloge') + '</span><div class="corps"><div>Ouverture rapide sur cet appareil</div><div class="t2">Garde la dernière situation pour l’afficher sans attendre. À n’activer que sur un appareil personnel.</div></div>' + interrupteur('prefGarder', S.prefs.garder, 'Ouverture rapide') + '</div>' : '')
     + '<div class="reglage"><span class="pastille-ic">' + ic('installer') + '</span><div class="corps"><div>Installer l’application</div><div class="t2" data-installer-aide>Sur iPhone : Partager › « Sur l’écran d’accueil ». Sur Android : menu › « Installer l’application ».</div></div><button class="bt petit cache" data-act="installer">Installer</button></div></div>';
   h += '<div class="carte"><div class="carte-titre"><h2>Mon compte</h2></div><div class="reglage"><span class="avatar">' + esc(initiales(S.moi.nom)) + '</span><div class="corps"><div>' + esc(S.moi.nom) + '</div><div class="t2">' + esc(LE.ROLES[S.moi.role].nom + (S.moi.fonction ? ' · ' + S.moi.fonction : '')) + '</div></div></div>'
-    + (API.demo ? '' : '<div class="reglage"><span class="pastille-ic">' + ic('cle') + '</span><div class="corps"><div>Code personnel</div><div class="t2">Modifiez votre code d’accès</div></div><button class="bt petit" data-act="changerCode">Modifier</button></div><div class="reglage"><span class="pastille-ic">' + ic('acces') + '</span><div class="corps"><div>Double authentification</div><div class="t2">' + (S.moi.mfa ? 'Activée' : 'Application d’authentification (Mots de passe d’Apple, Google Authenticator…)') + '</div></div><button class="bt petit" data-act="mfa">' + (S.moi.mfa ? 'Réinitialiser' : 'Activer') + '</button></div>')
+    + (API.demo ? '' : '<div class="reglage"><span class="pastille-ic">' + ic('cle') + '</span><div class="corps"><div>Code personnel</div><div class="t2">Modifiez votre code d’accès</div></div><button class="bt petit" data-act="changerCode">Modifier</button></div><div class="reglage"><span class="pastille-ic">' + ic('acces') + '</span><div class="corps"><div>Double authentification</div><div class="t2">' + (S.moi.mfa ? 'Activée' : 'Application d’authentification (Mots de passe d’Apple, Google Authenticator…)') + '</div></div><button class="bt petit" data-act="mfa">' + (S.moi.mfa ? 'Réinitialiser' : 'Activer') + '</button></div>' + ligneFaceID())
     + '<div class="reglage"><span class="pastille-ic">' + ic('sortie') + '</span><div class="corps"><div>' + (API.demo ? 'Quitter la démonstration' : 'Se déconnecter') + '</div></div><button class="bt petit" data-act="deconnexion">' + (API.demo ? 'Quitter' : 'Déconnexion') + '</button></div></div>';
   if (API.demo) h += '<div class="carte"><div class="carte-titre"><h2>Démonstration</h2></div><p class="texte-2" style="margin:0 0 12px;font-size:14px">Toutes les données sont fictives et restent dans ce navigateur. Changez de profil pour voir ce que chacun peut consulter.</p><div style="display:flex;flex-direction:column;gap:8px">'
     + DEMO.PROFILS.map(function (p) { var on = API.profilCourant() === p.email; return '<button class="bt' + (on ? ' principal-bt' : '') + '" style="justify-content:space-between" data-act="profilDemo" data-v="' + p.email + '"><span>' + esc(p.titre) + '</span><span style="opacity:.7;font-size:12px">' + esc(p.sous) + '</span></button>'; }).join('')
